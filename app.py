@@ -3,79 +3,87 @@ import subprocess
 from pathlib import Path
 import streamlit as st
 
-# Set Streamlit page config
-st.set_page_config(layout="wide")
-st.title("🧬 LiteDock - Enhanced Protein-Ligand Docking App")
+# Paths to utilities
+vina_path = Path("utils/vina")
+vina_split_path = Path("utils/vina_split")
+prepare_receptor_script = Path("utils/prepare_receptor4.py")
 
-# Create required folders
-Path("input").mkdir(exist_ok=True)
-Path("output").mkdir(exist_ok=True)
-Path("utils").mkdir(exist_ok=True)
+# Make vina and vina_split executable if they exist
+if vina_path.exists() and vina_split_path.exists():
+    subprocess.run(["chmod", "+x", str(vina_path), str(vina_split_path)])
+else:
+    st.error("❌ 'vina' or 'vina_split' not found in utils/. Please upload them and make them executable.")
 
-# 1. Download vina and vina_split binaries if not present
-vina_url = "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.5/vina_1.2.5_linux_x86_64.tar.gz"
-vina_tar = "utils/vina.tar.gz"
+# Upload Ligand
+ligand_sdf = st.file_uploader("Upload Ligand (.sdf)", type=["sdf"])
+if ligand_sdf:
+    with open("ligand.sdf", "wb") as f:
+        f.write(ligand_sdf.read())
+    st.info("📦 Converting ligand to PDBQT using Open Babel...")
+    result = subprocess.run(["obabel", "ligand.sdf", "-O", "ligand.pdbqt"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode == 0 and Path("ligand.pdbqt").exists():
+        st.success("✅ Ligand converted to PDBQT.")
+        with open("ligand.pdbqt", "rb") as f:
+            st.download_button("Download Ligand PDBQT", f, "ligand.pdbqt")
+    else:
+        st.error("❌ Open Babel failed to convert ligand.")
+        st.code(result.stderr)
 
-if not Path("utils/vina").exists():
-    st.info("📥 Downloading AutoDock Vina...")
-    subprocess.run(["wget", vina_url, "-O", vina_tar])
-    subprocess.run(["tar", "-xzf", vina_tar, "-C", "utils"])
-    subprocess.run(["chmod", "+x", "utils/vina", "utils/vina_split"])
-
-# 2. Download MGLTools Linux version and extract python2.7 & script
-mgl_python = "utils/mgltools/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py"
-mgl_dir = "utils/mgltools"
-
-if not Path(mgl_python).exists():
-    st.info("📥 Downloading MGLTools...")
-    subprocess.run(["wget", "https://files.docking.org/mgltools/mgltools_x86_64Linux2_1.5.7.tar.gz", "-O", "utils/mgltools.tar.gz"])
-    subprocess.run(["tar", "-xzf", "utils/mgltools.tar.gz", "-C", "utils"])
-    subprocess.run(["chmod", "+x", f"{mgl_dir}/bin/python2.7"])
-
-# 3. Upload ligand (SDF)
-ligand_file = st.file_uploader("Upload Ligand (.sdf)", type=["sdf"])
-if ligand_file:
-    ligand_path = os.path.join("input", ligand_file.name)
-    with open(ligand_path, "wb") as f:
-        f.write(ligand_file.read())
-    
-    st.success(f"Ligand {ligand_file.name} uploaded.")
-
-    # Convert ligand to PDBQT using Open Babel
-    ligand_pdbqt = ligand_path.replace(".sdf", ".pdbqt")
-    try:
-        st.info("⚙️ Converting ligand using Open Babel...")
-        result = subprocess.run(["obabel", ligand_path, "-O", ligand_pdbqt], capture_output=True, text=True)
-        if result.returncode != 0:
-            st.error("❌ Open Babel conversion failed.")
-            st.code(result.stderr)
+# Upload Protein
+protein_pdb = st.file_uploader("Upload Protein (.pdb)", type=["pdb"])
+if protein_pdb:
+    with open("protein.pdb", "wb") as f:
+        f.write(protein_pdb.read())
+    st.info("🛠 Preparing protein using MGLTools...")
+    if prepare_receptor_script.exists():
+        result = subprocess.run(["python2", str(prepare_receptor_script), "-r", "protein.pdb", "-o", "protein.pdbqt"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode == 0 and Path("protein.pdbqt").exists():
+            st.success("✅ Protein converted to PDBQT.")
+            with open("protein.pdbqt", "rb") as f:
+                st.download_button("Download Protein PDBQT", f, "protein.pdbqt")
         else:
-            st.success("✅ Ligand converted to PDBQT.")
-            with open(ligand_pdbqt, "rb") as f:
-                st.download_button("Download Ligand PDBQT", f, file_name=os.path.basename(ligand_pdbqt))
-    except Exception as e:
-        st.error(f"Open Babel crashed: {e}")
+            st.error("❌ Protein conversion failed.")
+            st.code(result.stderr)
+    else:
+        st.error("❌ prepare_receptor4.py not found in utils/")
 
-# 4. Upload protein (PDB)
-protein_file = st.file_uploader("Upload Protein (.pdb)", type=["pdb"])
-if protein_file:
-    protein_input = os.path.join("input", protein_file.name)
-    with open(protein_input, "wb") as f:
-        f.write(protein_file.read())
+# Docking section
+if Path("ligand.pdbqt").exists() and Path("protein.pdbqt").exists() and vina_path.exists():
+    st.subheader("🚀 Run Docking")
+    center_x = st.number_input("Center X", value=0.0)
+    center_y = st.number_input("Center Y", value=0.0)
+    center_z = st.number_input("Center Z", value=0.0)
+    size_x = st.number_input("Size X", value=20.0)
+    size_y = st.number_input("Size Y", value=20.0)
+    size_z = st.number_input("Size Z", value=20.0)
 
-    st.success(f"Protein {protein_file.name} uploaded.")
+    if st.button("Start Docking"):
+        st.info("⚙️ Running docking with AutoDock Vina...")
+        docking_command = [
+            str(vina_path),
+            "--receptor", "protein.pdbqt",
+            "--ligand", "ligand.pdbqt",
+            "--center_x", str(center_x),
+            "--center_y", str(center_y),
+            "--center_z", str(center_z),
+            "--size_x", str(size_x),
+            "--size_y", str(size_y),
+            "--size_z", str(size_z),
+            "--out", "docked_output.pdbqt",
+            "--log", "docking_log.txt"
+        ]
 
-    protein_output = protein_input.replace(".pdb", ".pdbqt")
-    prep_script = os.path.join(mgl_dir, "MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py")
-    try:
-        st.info("⚙️ Converting protein using MGLTools...")
-        subprocess.run(
-            [f"{mgl_dir}/bin/python2.7", prep_script, "-r", protein_input, "-o", protein_output],
-            check=True
-        )
-        st.success("✅ Protein converted to PDBQT.")
-        with open(protein_output, "rb") as f:
-            st.download_button("Download Protein PDBQT", f, file_name=os.path.basename(protein_output))
-    except Exception as e:
-        st.error(f"❌ Protein conversion failed.")
-        st.code(str(e))
+        result = subprocess.run(docking_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        if result.returncode == 0 and Path("docked_output.pdbqt").exists():
+            st.success("✅ Docking completed!")
+            with open("docked_output.pdbqt", "rb") as f:
+                st.download_button("Download Docked Output", f, "docked_output.pdbqt")
+            with open("docking_log.txt", "r") as log:
+                st.text("📄 Docking Log:\n" + log.read())
+        else:
+            st.error("❌ Docking failed.")
+            st.code(result.stderr)
+
