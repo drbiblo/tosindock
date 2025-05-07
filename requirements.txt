@@ -1,0 +1,6 @@
+streamlit
+py3Dmol
+biopython
+rdkit-pypi
+openbabel
+
