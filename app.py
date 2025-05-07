@@ -1,180 +1,81 @@
-import streamlit as st
 import os
 import subprocess
 from pathlib import Path
-import py3Dmol
-from Bio.PDB import PDBParser
-from streamlit.components.v1 import html
-import glob
+import streamlit as st
 
+# Set Streamlit page config
 st.set_page_config(layout="wide")
 st.title("🧬 LiteDock - Enhanced Protein-Ligand Docking App")
 
+# Create required folders
 Path("input").mkdir(exist_ok=True)
+Path("output").mkdir(exist_ok=True)
+Path("utils").mkdir(exist_ok=True)
 
-# SESSION STATE to prevent rerun after dropdown selection
-if "docking_done" not in st.session_state:
-    st.session_state.docking_done = False
+# 1. Download vina and vina_split binaries if not present
+vina_url = "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.5/vina_1.2.5_linux_x86_64.tar.gz"
+vina_tar = "utils/vina.tar.gz"
 
-# STEP 1: Upload Ligand (.sdf) and Convert to PDBQT
-st.header("Step 1: Upload Ligand (.sdf) → Convert to PDBQT")
-ligand_sdf = st.file_uploader("Upload Ligand File (.sdf)", type=["sdf"])
-if ligand_sdf:
-    ligand_input = "input/ligand_input.sdf"
-    ligand_output = "input/ligand_converted.pdbqt"
-    with open(ligand_input, "wb") as f:
-        f.write(ligand_sdf.read())
-    st.success("✅ Ligand .sdf uploaded!")
-    if st.button("Convert Ligand to PDBQT"):
-        with st.spinner("Converting ligand using Open Babel..."):
-            try:
-                subprocess.run(["obabel", ligand_input, "-O", ligand_output, "--gen3d"], check=True)
-                with open(ligand_output, "rb") as f:
-                    st.download_button("Download Ligand PDBQT", f, "ligand_converted.pdbqt")
-            except subprocess.CalledProcessError as e:
-                st.error("❌ Ligand conversion failed.")
+if not Path("utils/vina").exists():
+    st.info("📥 Downloading AutoDock Vina...")
+    subprocess.run(["wget", vina_url, "-O", vina_tar])
+    subprocess.run(["tar", "-xzf", vina_tar, "-C", "utils"])
+    subprocess.run(["chmod", "+x", "utils/vina", "utils/vina_split"])
 
-# STEP 2: Upload Protein (.pdb) and Convert to PDBQT via MGLTools
-st.header("Step 2: Upload Protein (.pdb) → Convert to PDBQT (MGLTools)")
-protein_pdb = st.file_uploader("Upload Protein File (.pdb)", type=["pdb"])
-if protein_pdb:
-    protein_input = "input/protein_input.pdb"
-    protein_output = "input/protein_converted.pdbqt"
+# 2. Download MGLTools Linux version and extract python2.7 & script
+mgl_python = "utils/mgltools/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py"
+mgl_dir = "utils/mgltools"
+
+if not Path(mgl_python).exists():
+    st.info("📥 Downloading MGLTools...")
+    subprocess.run(["wget", "https://files.docking.org/mgltools/mgltools_x86_64Linux2_1.5.7.tar.gz", "-O", "utils/mgltools.tar.gz"])
+    subprocess.run(["tar", "-xzf", "utils/mgltools.tar.gz", "-C", "utils"])
+    subprocess.run(["chmod", "+x", f"{mgl_dir}/bin/python2.7"])
+
+# 3. Upload ligand (SDF)
+ligand_file = st.file_uploader("Upload Ligand (.sdf)", type=["sdf"])
+if ligand_file:
+    ligand_path = os.path.join("input", ligand_file.name)
+    with open(ligand_path, "wb") as f:
+        f.write(ligand_file.read())
+    
+    st.success(f"Ligand {ligand_file.name} uploaded.")
+
+    # Convert ligand to PDBQT using Open Babel
+    ligand_pdbqt = ligand_path.replace(".sdf", ".pdbqt")
+    try:
+        st.info("⚙️ Converting ligand using Open Babel...")
+        result = subprocess.run(["obabel", ligand_path, "-O", ligand_pdbqt], capture_output=True, text=True)
+        if result.returncode != 0:
+            st.error("❌ Open Babel conversion failed.")
+            st.code(result.stderr)
+        else:
+            st.success("✅ Ligand converted to PDBQT.")
+            with open(ligand_pdbqt, "rb") as f:
+                st.download_button("Download Ligand PDBQT", f, file_name=os.path.basename(ligand_pdbqt))
+    except Exception as e:
+        st.error(f"Open Babel crashed: {e}")
+
+# 4. Upload protein (PDB)
+protein_file = st.file_uploader("Upload Protein (.pdb)", type=["pdb"])
+if protein_file:
+    protein_input = os.path.join("input", protein_file.name)
     with open(protein_input, "wb") as f:
-        f.write(protein_pdb.read())
-    st.success("✅ Protein .pdb uploaded!")
-    if st.button("Convert Protein to PDBQT"):
-        with st.spinner("Running MGLTools receptor preparation..."):
-            mgl_python = os.path.expanduser("~/Desktop/mgltools_1.5.7_MacOS-X/bin/python2.7")
-            prep_script = os.path.expanduser(
-                "~/Desktop/mgltools_1.5.7_MacOS-X/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py"
-            )
-            subprocess.run([mgl_python, prep_script, "-r", protein_input, "-o", protein_output, "-A", "hydrogens"], check=True)
-            with open(protein_output, "rb") as f:
-                st.download_button("Download Protein PDBQT", f, "protein_converted.pdbqt")
+        f.write(protein_file.read())
 
-# STEP 3: Upload PDBQT files and Run Docking
-st.header("Step 3: Upload Converted Files and Run Docking")
-ligand_pdbqt = st.file_uploader("Upload Converted Ligand (.pdbqt)", type=["pdbqt"], key="ligand_final")
-protein_pdbqt = st.file_uploader("Upload Converted Protein (.pdbqt)", type=["pdbqt"], key="protein_final")
+    st.success(f"Protein {protein_file.name} uploaded.")
 
-if ligand_pdbqt and protein_pdbqt:
-    ligand_final = "input/final_ligand.pdbqt"
-    protein_final = "input/final_protein.pdbqt"
-    with open(ligand_final, "wb") as f:
-        f.write(ligand_pdbqt.read())
-    with open(protein_final, "wb") as f:
-        f.write(protein_pdbqt.read())
-
-    st.subheader("📍 Automatically Generating Docking Box")
-    parser = PDBParser(QUIET=True)
-    structure = parser.get_structure("protein", "input/protein_input.pdb")
-    coords = [atom.coord for atom in structure.get_atoms()]
-    xs, ys, zs = zip(*coords)
-    cx, cy, cz = sum(xs)/len(xs), sum(ys)/len(ys), sum(zs)/len(zs)
-    sx, sy, sz = max(xs)-min(xs)+10, max(ys)-min(ys)+10, max(zs)-min(zs)+10
-    st.write(f"Center: ({cx:.2f}, {cy:.2f}, {cz:.2f})")
-    st.write(f"Size: x={sx:.2f}, y={sy:.2f}, z={sz:.2f}")
-
-    # 3D Grid Box Preview
-    st.subheader("📦 Docking Grid Preview")
-    with open("input/protein_input.pdb") as f:
-        pdb_text = f.read()
-    view = py3Dmol.view(width=700, height=500)
-    view.addModel(pdb_text, "pdb")
-    view.setStyle({"cartoon": {"color": "spectrum"}})
-    view.addBox({
-        "center": {"x": cx, "y": cy, "z": cz},
-        "dimensions": {"w": sx, "h": sy, "d": sz},
-        "color": "red", "opacity": 0.3
-    })
-    view.zoomTo()
-    html(view._make_html(), height=500)
-
-    if st.button("🚀 Run Docking"):
-        output_pdbqt = "input/docked_output.pdbqt"
-        log_file = "input/docking_log.txt"
-        subprocess.run([
-            "vina",
-            "--receptor", protein_final,
-            "--ligand", ligand_final,
-            "--center_x", str(cx), "--center_y", str(cy), "--center_z", str(cz),
-            "--size_x", str(sx), "--size_y", str(sy), "--size_z", str(sz),
-            "--out", output_pdbqt,
-            "--log", log_file
-        ], check=True)
-        st.session_state.docking_done = True
-
-# Only process results if docking has completed
-if st.session_state.docking_done:
-    subprocess.run(["vina_split", "--input", "input/docked_output.pdbqt", "--ligand", "input/pose_out"], check=True)
-
-    pose_files = sorted(glob.glob(os.path.join("input", "pose_out*.pdbqt")))
-    if not pose_files:
-        st.error("❌ No poses were generated by vina_split. Please check your docking output.")
-    else:
-        st.info(f"🔢 {len(pose_files)} binding poses detected.")
-
-        st.subheader("📄 Vina Log Output")
-        with open("input/docking_log.txt") as f:
-            log_lines = f.readlines()
-            for line in log_lines:
-                st.text(line.strip())
-
-        st.subheader("📊 Binding Scores Table")
-        scores = []
-        for line in log_lines:
-            if "REMARK VINA RESULT:" in line:
-                parts = line.split()
-                if len(parts) > 3:
-                    scores.append(float(parts[3]))
-        for i, score in enumerate(scores):
-            st.write(f"Pose {i+1}: {score} kcal/mol")
-
-        st.subheader("🔬 Binding Poses Viewer")
-        selected_pose_index = st.selectbox("Select Pose", list(range(1, len(pose_files)+1)))
-        selected_file = pose_files[selected_pose_index - 1]
-
-        with open("input/final_protein.pdbqt") as f:
-            prot = f.read()
-        with open(selected_file) as f:
-            lig = f.read()
-
-        view = py3Dmol.view(width=700, height=500)
-        view.addModel(prot, "pdbqt")
-        view.setStyle({"cartoon": {"color": "spectrum"}})
-        view.addModel(lig, "pdbqt")
-        view.setStyle({"model": 1}, {"stick": {}, "sphere": {"scale": 0.3}})
-        view.zoomTo()
-        html(view._make_html(), height=500)
-
-        st.subheader("📥 Download Docked Complexes")
-        combined_dir = "input/complex_poses"
-        os.makedirs(combined_dir, exist_ok=True)
-        combined_files = []
-        for i, pose_file in enumerate(pose_files):
-            complex_out = os.path.join(combined_dir, f"complex_pose_{i+1}.pdb")
-            with open(complex_out, "w") as fout:
-                with open("input/protein_input.pdb") as fprot:
-                    fout.write(fprot.read())
-                with open(pose_file) as flig:
-                    fout.write(flig.read())
-            combined_files.append(complex_out)
-
-        zip_path = "input/all_complex_poses.zip"
-        subprocess.run(["zip", "-j", zip_path] + combined_files)
-        with open(zip_path, "rb") as f:
-            st.download_button("📦 Download All Complex Poses (ZIP)", f, "all_complex_poses.zip")
-
-        # ✅ New block: Combine top ligand pose with final_protein.pdbqt and convert to PDB
-        top_pose = pose_files[0]
-        combined_pdbqt = "input/top_complex_pose.pdbqt"
-        with open("input/final_protein.pdbqt") as fprot, open(top_pose) as flig, open(combined_pdbqt, "w") as fout:
-            fout.write(fprot.read())
-            fout.write(flig.read())
-
-        top_complex_pdb = "input/top_complex_pose.pdb"
-        subprocess.run(["obabel", combined_pdbqt, "-O", top_complex_pdb], check=True)
-
-        with open(top_complex_pdb, "rb") as f:
-            st.download_button("🏆 Download Top Pose Complex (PDB)", f, "top_pose_complex.pdb")
+    protein_output = protein_input.replace(".pdb", ".pdbqt")
+    prep_script = os.path.join(mgl_dir, "MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor4.py")
+    try:
+        st.info("⚙️ Converting protein using MGLTools...")
+        subprocess.run(
+            [f"{mgl_dir}/bin/python2.7", prep_script, "-r", protein_input, "-o", protein_output],
+            check=True
+        )
+        st.success("✅ Protein converted to PDBQT.")
+        with open(protein_output, "rb") as f:
+            st.download_button("Download Protein PDBQT", f, file_name=os.path.basename(protein_output))
+    except Exception as e:
+        st.error(f"❌ Protein conversion failed.")
+        st.code(str(e))
