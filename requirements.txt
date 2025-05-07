@@ -1,7 +1,0 @@
-streamlit
-py3Dmol
-biopython
-openbabel
--f https://wheel-index.labs.rdkit.org/rdkit
-rdkit==2022.9.5
-
