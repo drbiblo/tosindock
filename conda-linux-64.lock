@@ -1,0 +1,10 @@
+# THIS IS A SIMPLIFIED VERSION OF conda-linux-64.lock
+# Simulated lock for streamlit deployment with py3Dmol included
+
+@EXPLICIT
+https://conda.anaconda.org/conda-forge/linux-64/python-3.10.13-h7a1cb2a_0.conda
+https://conda.anaconda.org/conda-forge/linux-64/streamlit-1.45.0-pyhd8ed1ab_0.conda
+https://conda.anaconda.org/conda-forge/linux-64/py3dmol-2.4.2-pyhd8ed1ab_0.conda
+https://conda.anaconda.org/conda-forge/linux-64/biopython-1.85-py310h2372a71_0.conda
+https://conda.anaconda.org/conda-forge/linux-64/openbabel-3.1.1-py310h227be39_7.conda
+https://conda.anaconda.org/conda-forge/linux-64/rdkit-2022.03.5-py310h7c018df_1.conda
